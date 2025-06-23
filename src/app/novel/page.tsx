@@ -1,5 +1,5 @@
-import NovelWriter from '@/components/novel/NovelWriter';
+import EnhancedNovelWriter from '@/components/novel/EnhancedNovelWriter';
 
 export default function NovelPage() {
-  return <NovelWriter />;
+  return <EnhancedNovelWriter />;
 }
