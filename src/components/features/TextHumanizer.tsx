@@ -1,12 +1,8 @@
 import React, { useState } from 'react'
 import { apiService } from '@/services/api'
 import { HumanizeTextResponse } from '@/types'
-import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button, Textarea, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, Alert, AlertDescription, AlertTitle, Badge } from '@/components/ui'
 import { Loader2, Copy, CheckCircle2, ArrowRight } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
 
 export function TextHumanizer() {
   const [aiText, setAiText] = useState('')

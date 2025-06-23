@@ -1,10 +1,7 @@
 import React, { useState } from 'react'
 import { apiService } from '@/services/api'
 import { AnalyzeWritingStyleResponse } from '@/types'
-import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button, Textarea, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, Alert, AlertDescription, AlertTitle } from '@/components/ui'
 import { Loader2 } from 'lucide-react'
 
 export function WritingStyleAnalyzer() {

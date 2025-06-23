@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui'
 import { WritingStyleAnalyzer } from '@/components/features/WritingStyleAnalyzer'
 import { HumanContentGenerator } from '@/components/features/HumanContentGenerator'
 import { TextHumanizer } from '@/components/features/TextHumanizer'
