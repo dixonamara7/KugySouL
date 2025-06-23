@@ -28,8 +28,9 @@ export function TextHumanizer() {
         ai_text: aiText
       })
       setResult(response)
-    } catch (err: any) {
-      setError(err.message || 'Failed to humanize text')
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to humanize text'
+      setError(errorMessage)
     } finally {
       setIsHumanizing(false)
     }

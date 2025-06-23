@@ -97,7 +97,7 @@ export interface AnalyzeWritingStyleResponse {
 // Human Content Generation types
 export interface GenerateHumanContentRequest {
   prompt: string
-  style_profile?: any
+  style_profile?: Record<string, unknown>
   length?: number
 }
 
@@ -115,7 +115,7 @@ export interface GenerateHumanContentResponse {
 // Text Humanization types
 export interface HumanizeTextRequest {
   ai_text: string
-  style_profile?: any
+  style_profile?: Record<string, unknown>
 }
 
 export interface HumanizeTextResponse {

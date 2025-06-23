@@ -27,8 +27,9 @@ export function AIDetectionChecker() {
         text
       })
       setResult(response)
-    } catch (err: any) {
-      setError(err.message || 'Failed to check AI detection')
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to check AI detection'
+      setError(errorMessage)
     } finally {
       setIsChecking(false)
     }

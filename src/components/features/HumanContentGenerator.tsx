@@ -3,7 +3,6 @@ import { apiService } from '@/services/api'
 import { GenerateHumanContentResponse } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Loader2, Copy, CheckCircle2 } from 'lucide-react'
@@ -31,8 +30,9 @@ export function HumanContentGenerator() {
         length
       })
       setResult(response)
-    } catch (err: any) {
-      setError(err.message || 'Failed to generate content')
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to generate content'
+      setError(errorMessage)
     } finally {
       setIsGenerating(false)
     }

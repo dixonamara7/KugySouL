@@ -47,8 +47,9 @@ export function LoginForm({ onLoginSuccess }: LoginFormProps) {
       } else {
         setError(response.message || 'Login failed')
       }
-    } catch (err: any) {
-      setError(err.message || 'Login failed')
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Login failed'
+      setError(errorMessage)
     } finally {
       setIsLoggingIn(false)
     }
@@ -109,7 +110,7 @@ export function LoginForm({ onLoginSuccess }: LoginFormProps) {
       </CardContent>
       <CardFooter className="flex justify-center">
         <p className="text-sm text-muted-foreground">
-          Don't have an account? Contact support for access.
+          Don&apos;t have an account? Contact support for access.
         </p>
       </CardFooter>
     </Card>

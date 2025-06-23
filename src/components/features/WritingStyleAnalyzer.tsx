@@ -26,8 +26,9 @@ export function WritingStyleAnalyzer() {
         text_samples: [textSample]
       })
       setResult(response)
-    } catch (err: any) {
-      setError(err.message || 'Failed to analyze writing style')
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to analyze writing style'
+      setError(errorMessage)
     } finally {
       setIsAnalyzing(false)
     }

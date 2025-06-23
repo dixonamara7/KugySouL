@@ -152,13 +152,13 @@ export const apiService = {
   },
 
   // Get conversations
-  async getConversations(): Promise<any> {
+  async getConversations(): Promise<unknown> {
     const response = await api.get(endpoints.conversations)
     return response.data
   },
 
   // Simple conversation
-  async simpleConversation(data: any): Promise<any> {
+  async simpleConversation(data: Record<string, unknown>): Promise<unknown> {
     const response = await api.post(endpoints.simpleConversation, data)
     return response.data
   },
