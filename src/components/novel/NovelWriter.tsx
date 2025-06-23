@@ -11,7 +11,9 @@ interface NovelChapter {
   title: string;
   content: string;
   wordCount: number;
+  isComplete: boolean;
   createdAt: Date;
+  completedAt?: Date;
 }
 
 interface NovelProject {
@@ -20,8 +22,10 @@ interface NovelProject {
   genre: string;
   description: string;
   chapters: NovelChapter[];
+  currentChapterIndex: number;
   totalWords: number;
   createdAt: Date;
+  lastSaved: Date;
 }
 
 interface PublishHistory {
@@ -46,14 +50,18 @@ export default function NovelWriter() {
   const [writingMode, setWritingMode] = useState<WritingMode>('story');
   const [selectedGenre, setSelectedGenre] = useState('fantasy');
   const [wordCount, setWordCount] = useState(0);
+  const [chapterWordCount, setChapterWordCount] = useState(0);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [collaborativeMode, setCollaborativeMode] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState('');
   const [autoPilotMode, setAutoPilotMode] = useState(false);
   const [autoPilotInterval, setAutoPilotInterval] = useState<NodeJS.Timeout | null>(null);
-  const [autoPilotSpeed, setAutoPilotSpeed] = useState(10); // seconds between generations
+  const [autoPilotSpeed, setAutoPilotSpeed] = useState(15); // seconds between generations
   const [selectedModel, setSelectedModel] = useState('google/gemini-2.0-flash-001');
   const [selectedLanguage, setSelectedLanguage] = useState('english');
+  const [currentChapter, setCurrentChapter] = useState<NovelChapter | null>(null);
+  const [autoSaveInterval, setAutoSaveInterval] = useState<NodeJS.Timeout | null>(null);
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
 
   // Document Publishing States
   const [publishHistory, setPublishHistory] = useState<PublishHistory[]>([]);
@@ -62,38 +70,88 @@ export default function NovelWriter() {
   const [publishProgress, setPublishProgress] = useState(0);
 
   const createNewProject = () => {
+    const firstChapter: NovelChapter = {
+      id: Date.now().toString(),
+      title: 'Chapter 1',
+      content: '',
+      wordCount: 0,
+      isComplete: false,
+      createdAt: new Date()
+    };
+
     const newProject: NovelProject = {
       id: Date.now().toString(),
       title: 'Untitled Novel',
-      genre: 'Fantasy',
+      genre: selectedGenre,
       description: '',
-      chapters: [],
+      chapters: [firstChapter],
+      currentChapterIndex: 0,
       totalWords: 0,
-      createdAt: new Date()
+      createdAt: new Date(),
+      lastSaved: new Date()
     };
+    
     setProjects([...projects, newProject]);
     setCurrentProject(newProject);
+    setCurrentChapter(firstChapter);
+    setEditorContent('');
+    setChapterWordCount(0);
     setIsWriting(true);
+    
+    // Start auto-save
+    startAutoSave();
   };
 
   const addNewChapter = () => {
     if (!currentProject) return;
+    
+    // Save current chapter first
+    saveCurrentChapter();
     
     const newChapter: NovelChapter = {
       id: Date.now().toString(),
       title: `Chapter ${currentProject.chapters.length + 1}`,
       content: '',
       wordCount: 0,
+      isComplete: false,
       createdAt: new Date()
     };
 
     const updatedProject = {
       ...currentProject,
-      chapters: [...currentProject.chapters, newChapter]
+      chapters: [...currentProject.chapters, newChapter],
+      currentChapterIndex: currentProject.chapters.length
     };
     
     setCurrentProject(updatedProject);
+    setCurrentChapter(newChapter);
+    setEditorContent('');
+    setChapterWordCount(0);
     setProjects(projects.map(p => p.id === currentProject.id ? updatedProject : p));
+    
+    // Save to localStorage
+    saveToLocalStorage(updatedProject);
+  };
+
+  const switchToChapter = (chapterIndex: number) => {
+    if (!currentProject || chapterIndex < 0 || chapterIndex >= currentProject.chapters.length) return;
+    
+    // Save current chapter first
+    saveCurrentChapter();
+    
+    const chapter = currentProject.chapters[chapterIndex];
+    const updatedProject = {
+      ...currentProject,
+      currentChapterIndex: chapterIndex
+    };
+    
+    setCurrentProject(updatedProject);
+    setCurrentChapter(chapter);
+    setEditorContent(chapter.content);
+    setChapterWordCount(chapter.wordCount);
+    
+    // Save to localStorage
+    saveToLocalStorage(updatedProject);
   };
 
   const getPromptByMode = () => {
@@ -263,7 +321,14 @@ Keep suggestions constructive and actionable:`,
   };
 
   const autoPilotWrite = async () => {
-    if (isGenerating) return;
+    if (isGenerating || !currentProject || !currentChapter) return;
+    
+    // Check if current chapter is complete (1800-2000 words)
+    if (chapterWordCount >= 1800) {
+      // Complete current chapter and create new one
+      await completeCurrentChapter();
+      return;
+    }
     
     setIsGenerating(true);
     try {
@@ -271,69 +336,149 @@ Keep suggestions constructive and actionable:`,
         ? 'Write in Indonesian language (Bahasa Indonesia). Use natural, fluent Indonesian with proper grammar and vocabulary. '
         : 'Write in English language. ';
       
+      const remainingWords = 2000 - chapterWordCount;
+      const isChapterEnding = remainingWords <= 400; // Start wrapping up when close to limit
+      
       let promptText = '';
       
       if (!editorContent.trim()) {
-        // Start a new story
-        promptText = `You are an expert ${selectedGenre} novelist. ${languageInstruction}Start writing a compelling ${selectedGenre} novel. Create an engaging opening that:
+        // Start a new chapter
+        const chapterNumber = currentProject.currentChapterIndex + 1;
+        const previousChapterSummary = getPreviousChapterSummary();
+        
+        promptText = `You are an expert ${selectedGenre} novelist. ${languageInstruction}
 
-- Introduces the main character and setting
-- Establishes the tone and atmosphere
-- Hooks the reader immediately
-- Sets up the central conflict or mystery
+${previousChapterSummary ? `Previous chapter summary: ${previousChapterSummary}\n\n` : ''}
+
+Write Chapter ${chapterNumber} of this ${selectedGenre} novel. Create an engaging chapter that:
+
+- ${chapterNumber === 1 ? 'Introduces the main character and setting' : 'Continues from the previous chapter naturally'}
+- Establishes clear chapter goals and conflicts
 - Uses vivid, immersive descriptions
-- Is approximately 800-1200 words (write a substantial section)
+- Has a proper chapter structure (beginning, middle, end)
+- Builds toward a chapter climax or cliffhanger
+- Write approximately 400-600 words for this section
+- Remember: Total chapter should be 1800-2000 words maximum
 
-Begin the novel now:`;
+Begin Chapter ${chapterNumber}:`;
       } else {
-        // Continue the existing story
-        const lastSection = editorContent.split('\n\n').slice(-3).join('\n\n');
-        promptText = `You are continuing this ${selectedGenre} novel. ${languageInstruction}Here's what has been written so far:
+        // Continue the current chapter
+        const lastSection = editorContent.split('\n\n').slice(-2).join('\n\n');
+        
+        if (isChapterEnding) {
+          promptText = `You are continuing Chapter ${currentProject.currentChapterIndex + 1} of this ${selectedGenre} novel. ${languageInstruction}
 
+Current chapter content (last part):
 "${lastSection}"
 
-Continue the story naturally and seamlessly. Write the next section that:
+IMPORTANT: This chapter is nearing completion (${chapterWordCount} words written, target: 1800-2000 words).
+
+Write the FINAL section of this chapter that:
+- Brings the chapter to a satisfying conclusion
+- Resolves the chapter's main conflict or tension
+- Sets up intrigue for the next chapter
+- Provides a natural stopping point
+- Write approximately ${remainingWords} words to complete the chapter
+- End with a compelling cliffhanger or transition
+
+Complete the chapter:`;
+        } else {
+          promptText = `You are continuing Chapter ${currentProject.currentChapterIndex + 1} of this ${selectedGenre} novel. ${languageInstruction}
+
+Current chapter content (last part):
+"${lastSection}"
+
+Continue the chapter naturally. Write the next section that:
 - Flows perfectly from the previous text
-- Advances the plot meaningfully
+- Advances the chapter's plot meaningfully
 - Develops characters further
 - Maintains the established tone and style
 - Adds tension, conflict, or intrigue
-- Is approximately 800-1200 words (write a substantial section)
+- Write approximately 400-600 words
+- Remember: Chapter target is 1800-2000 words total (currently ${chapterWordCount} words)
 
 Continue writing:`;
+        }
       }
 
       const response = await apiService.sendChatMessage({
         message: promptText,
         model: selectedModel,
         temperature: 0.8,
-        max_tokens: 800
+        max_tokens: 600
       });
       
-      // Debug logging to see what we get from backend
-      console.log('🔍 Auto Pilot Response:', response);
-      console.log('🔍 Response keys:', Object.keys(response));
-      console.log('🔍 Response.response:', response.response);
-      console.log('🔍 Response.message:', response.message);
-      console.log('🔍 Response.content:', response.content);
-      console.log('🔍 Response.data:', response.data);
-      
       const newContent = response.response || response.message || response.content || response.data || '';
-      console.log('🔍 Final newContent:', newContent);
       
       if (newContent && newContent.trim()) {
-        console.log('✅ Adding content to editor:', newContent.substring(0, 100) + '...');
-        setEditorContent(prev => prev ? prev + '\n\n' + newContent : newContent);
-      } else {
-        console.error('❌ No content found in response!', response);
+        const updatedContent = editorContent ? editorContent + '\n\n' + newContent : newContent;
+        setEditorContent(updatedContent);
+        
+        // Update word count
+        const newWordCount = countWords(updatedContent);
+        setChapterWordCount(newWordCount);
+        
+        // Auto-save
+        saveCurrentChapter(updatedContent, newWordCount);
+        
+        console.log(`✅ Chapter ${currentProject.currentChapterIndex + 1}: ${newWordCount}/2000 words`);
       }
     } catch (error) {
       console.error('Auto-pilot writing failed:', error);
-      // Stop auto-pilot on error
       stopAutoPilot();
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const completeCurrentChapter = async () => {
+    if (!currentProject || !currentChapter) return;
+    
+    // Mark chapter as complete
+    const completedChapter = {
+      ...currentChapter,
+      content: editorContent,
+      wordCount: chapterWordCount,
+      isComplete: true,
+      completedAt: new Date()
+    };
+    
+    // Update project
+    const updatedChapters = [...currentProject.chapters];
+    updatedChapters[currentProject.currentChapterIndex] = completedChapter;
+    
+    const updatedProject = {
+      ...currentProject,
+      chapters: updatedChapters,
+      totalWords: updatedChapters.reduce((sum, ch) => sum + ch.wordCount, 0)
+    };
+    
+    setCurrentProject(updatedProject);
+    saveToLocalStorage(updatedProject);
+    
+    // Auto-create next chapter if in auto-pilot mode
+    if (autoPilotMode) {
+      setTimeout(() => {
+        addNewChapter();
+        // Continue auto-pilot in new chapter
+        setTimeout(() => {
+          autoPilotWrite();
+        }, 2000);
+      }, 1000);
+    }
+    
+    console.log(`🎉 Chapter ${currentProject.currentChapterIndex + 1} completed! (${chapterWordCount} words)`);
+  };
+
+  const getPreviousChapterSummary = () => {
+    if (!currentProject || currentProject.currentChapterIndex === 0) return '';
+    
+    const previousChapter = currentProject.chapters[currentProject.currentChapterIndex - 1];
+    if (!previousChapter || !previousChapter.content) return '';
+    
+    // Return last paragraph of previous chapter for context
+    const paragraphs = previousChapter.content.split('\n\n');
+    return paragraphs.slice(-1).join('\n\n').slice(0, 300) + '...';
   };
 
   const startAutoPilot = () => {
@@ -362,28 +507,120 @@ Continue writing:`;
     return text.trim().split(/\s+/).filter(word => word.length > 0).length;
   };
 
-  const saveProject = useCallback(() => {
-    if (currentProject) {
-      // Update current project with editor content
-      const updatedProject = {
-        ...currentProject,
-        totalWords: wordCount
-      };
-      
-      const updatedProjects = projects.map(p => 
-        p.id === currentProject.id ? updatedProject : p
-      );
-      
-      setProjects(updatedProjects);
-      localStorage.setItem('novel_projects', JSON.stringify(updatedProjects));
-      setLastSaved(new Date());
+  // Auto-save functions
+  const startAutoSave = () => {
+    if (autoSaveInterval) clearInterval(autoSaveInterval);
+    
+    const interval = setInterval(() => {
+      if (currentProject && currentChapter) {
+        saveCurrentChapter();
+      }
+    }, 30000); // Auto-save every 30 seconds
+    
+    setAutoSaveInterval(interval);
+  };
+
+  const stopAutoSave = () => {
+    if (autoSaveInterval) {
+      clearInterval(autoSaveInterval);
+      setAutoSaveInterval(null);
     }
-  }, [currentProject, wordCount, projects]);
+  };
+
+  const saveCurrentChapter = useCallback((content?: string, wordCount?: number) => {
+    if (!currentProject || !currentChapter) return;
+    
+    setIsAutoSaving(true);
+    
+    const chapterContent = content || editorContent;
+    const chapterWords = wordCount || countWords(chapterContent);
+    
+    // Update current chapter
+    const updatedChapter = {
+      ...currentChapter,
+      content: chapterContent,
+      wordCount: chapterWords
+    };
+    
+    // Update project
+    const updatedChapters = [...currentProject.chapters];
+    updatedChapters[currentProject.currentChapterIndex] = updatedChapter;
+    
+    const updatedProject = {
+      ...currentProject,
+      chapters: updatedChapters,
+      totalWords: updatedChapters.reduce((sum, ch) => sum + ch.wordCount, 0),
+      lastSaved: new Date()
+    };
+    
+    setCurrentProject(updatedProject);
+    setCurrentChapter(updatedChapter);
+    setProjects(prev => prev.map(p => p.id === currentProject.id ? updatedProject : p));
+    
+    // Save to localStorage
+    saveToLocalStorage(updatedProject);
+    
+    setLastSaved(new Date());
+    setTimeout(() => setIsAutoSaving(false), 1000);
+  }, [currentProject, currentChapter, editorContent, projects]);
+
+  const saveToLocalStorage = (project: NovelProject) => {
+    try {
+      const updatedProjects = projects.map(p => p.id === project.id ? project : p);
+      localStorage.setItem('novel_projects', JSON.stringify(updatedProjects));
+      console.log('✅ Project saved to localStorage');
+    } catch (error) {
+      console.error('❌ Failed to save to localStorage:', error);
+    }
+  };
+
+  const loadFromLocalStorage = () => {
+    try {
+      const saved = localStorage.getItem('novel_projects');
+      if (saved) {
+        const savedProjects = JSON.parse(saved);
+        setProjects(savedProjects);
+        
+        // Load the most recent project
+        if (savedProjects.length > 0) {
+          const lastProject = savedProjects[savedProjects.length - 1];
+          setCurrentProject(lastProject);
+          
+          // Load current chapter
+          const currentChapterIndex = lastProject.currentChapterIndex || 0;
+          const chapter = lastProject.chapters[currentChapterIndex];
+          if (chapter) {
+            setCurrentChapter(chapter);
+            setEditorContent(chapter.content || '');
+            setChapterWordCount(chapter.wordCount || 0);
+          }
+          
+          setIsWriting(true);
+          startAutoSave();
+        }
+      }
+    } catch (error) {
+      console.error('❌ Failed to load from localStorage:', error);
+    }
+  };
+
+  // Manual save function (for Save button)
+  const saveProject = useCallback(() => {
+    if (currentProject && currentChapter) {
+      saveCurrentChapter();
+      alert('✅ Novel saved successfully!');
+    }
+  }, [currentProject, currentChapter, saveCurrentChapter]);
 
   const exportNovel = () => {
-    if (!currentProject || !editorContent) return;
+    if (!currentProject) return;
     
-    const content = `${currentProject.title}\n\n${editorContent}`;
+    // Combine all chapters
+    const fullNovel = currentProject.chapters
+      .map((chapter, index) => `Chapter ${index + 1}: ${chapter.title}\n\n${chapter.content}`)
+      .join('\n\n---\n\n');
+    
+    const content = `${currentProject.title}\n\nGenre: ${currentProject.genre}\nTotal Words: ${currentProject.totalWords}\n\n${fullNovel}`;
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -550,27 +787,26 @@ Continue writing:`;
   }, [editorContent, currentProject, projects, saveProject]);
 
   // Update word count when editor content changes
+  // Load projects on component mount
   useEffect(() => {
-    setWordCount(countWords(editorContent));
+    loadFromLocalStorage();
+    
+    // Cleanup on unmount
+    return () => {
+      stopAutoSave();
+      stopAutoPilot();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Update word counts when content changes
+  useEffect(() => {
+    const words = countWords(editorContent);
+    setWordCount(words);
+    setChapterWordCount(words);
   }, [editorContent]);
 
-  // Cleanup auto-pilot on unmount
+  // Load publish history
   useEffect(() => {
-    return () => {
-      if (autoPilotInterval) {
-        clearInterval(autoPilotInterval);
-      }
-    };
-  }, [autoPilotInterval]);
-
-  useEffect(() => {
-    // Load projects from localStorage
-    const saved = localStorage.getItem('novel_projects');
-    if (saved) {
-      setProjects(JSON.parse(saved));
-    }
-
-    // Load publish history
     const savedHistory = localStorage.getItem('publish_history');
     if (savedHistory) {
       try {
@@ -775,13 +1011,35 @@ Continue writing:`;
               </Button>
             </div>
             <div className="space-y-2 max-h-60 overflow-y-auto">
-              {currentProject?.chapters.map((chapter) => (
+              {currentProject?.chapters.map((chapter, index) => (
                 <div
                   key={chapter.id}
-                  className="bg-white/5 rounded-lg p-3 border border-white/10"
+                  onClick={() => switchToChapter(index)}
+                  className={`bg-white/5 rounded-lg p-3 border cursor-pointer transition-all ${
+                    currentProject.currentChapterIndex === index 
+                      ? 'border-purple-400 bg-purple-500/20' 
+                      : 'border-white/10 hover:border-white/20'
+                  }`}
                 >
-                  <div className="text-white text-sm font-medium">{chapter.title}</div>
-                  <div className="text-gray-400 text-xs">{chapter.wordCount} words</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-white text-sm font-medium">{chapter.title}</div>
+                    {chapter.isComplete && (
+                      <CheckCircle className="w-4 h-4 text-green-400" />
+                    )}
+                  </div>
+                  <div className="flex justify-between items-center mt-1">
+                    <div className="text-gray-400 text-xs">
+                      {chapter.wordCount}/2000 words
+                    </div>
+                    <div className="w-16 bg-gray-700 rounded-full h-1">
+                      <div 
+                        className={`h-1 rounded-full transition-all ${
+                          chapter.wordCount >= 1800 ? 'bg-green-400' : 'bg-purple-400'
+                        }`}
+                        style={{ width: `${Math.min((chapter.wordCount / 2000) * 100, 100)}%` }}
+                      />
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -828,13 +1086,29 @@ Continue writing:`;
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <h2 className="text-white font-semibold">
-                  {currentProject?.chapters[0]?.title || 'New Chapter'}
+                  {currentChapter?.title || 'New Chapter'}
                 </h2>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-gray-300">
+                    {chapterWordCount}/2000 words
+                  </span>
+                  {chapterWordCount >= 1800 && (
+                    <span className="text-green-400 text-xs">✓ Ready to complete</span>
+                  )}
+                  {isAutoSaving && (
+                    <span className="text-blue-400 text-xs">💾 Auto-saving...</span>
+                  )}
+                  {lastSaved && (
+                    <span className="text-gray-400 text-xs">
+                      Last saved: {lastSaved.toLocaleTimeString()}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <Button onClick={saveProject} size="sm" variant="ghost">
                   <Save className="w-4 h-4 mr-2" />
-                  Save
+                  Save Draft
                 </Button>
                 <Button onClick={exportNovel} size="sm" variant="ghost">
                   <Download className="w-4 h-4 mr-2" />
@@ -857,7 +1131,7 @@ Continue writing:`;
                   ) : (
                     <Upload className="w-4 h-4 mr-2" />
                   )}
-                  {isPublishing ? 'Publishing...' : 'Publish Document'}
+                  {isPublishing ? 'Publishing...' : 'Publish to PDF'}
                 </Button>
 
                 {/* Publish History Button */}
@@ -1093,28 +1367,48 @@ Continue writing:`;
                           </Button>
                         </div>
 
-                        {/* Auto-Pilot Mode */}
+                        {/* Smart Auto-Pilot Mode */}
                         <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/20 rounded-lg p-3">
                           <div className="flex items-center justify-between mb-2">
-                            <h4 className="text-purple-300 font-medium">🤖 Auto-Pilot Mode</h4>
+                            <h4 className="text-purple-300 font-medium">🤖 Smart Auto-Pilot</h4>
                             <div className={`w-2 h-2 rounded-full ${autoPilotMode ? 'bg-green-400 animate-pulse' : 'bg-gray-500'}`} />
                           </div>
                           <p className="text-gray-300 text-xs mb-3">
-                            AI writes the entire novel automatically. Just sit back and watch!
+                            AI writes complete chapters (1800-2000 words) automatically. Creates new chapters when current one is complete!
                           </p>
+                          
+                          {currentChapter && (
+                            <div className="mb-3 p-2 bg-black/20 rounded text-xs">
+                              <div className="flex justify-between text-gray-300 mb-1">
+                                <span>Current: {currentChapter.title}</span>
+                                <span>{chapterWordCount}/2000 words</span>
+                              </div>
+                              <div className="w-full bg-gray-700 rounded-full h-1">
+                                <div 
+                                  className={`h-1 rounded-full transition-all ${
+                                    chapterWordCount >= 1800 ? 'bg-green-400' : 'bg-purple-400'
+                                  }`}
+                                  style={{ width: `${Math.min((chapterWordCount / 2000) * 100, 100)}%` }}
+                                />
+                              </div>
+                              {chapterWordCount >= 1800 && (
+                                <div className="text-green-400 text-xs mt-1">✓ Ready to complete chapter</div>
+                              )}
+                            </div>
+                          )}
                           
                           {!autoPilotMode ? (
                             <div className="space-y-2">
                               <div className="flex items-center gap-2">
-                                <label className="text-gray-300 text-xs">Speed:</label>
+                                <label className="text-gray-300 text-xs">Writing Speed:</label>
                                 <select
                                   value={autoPilotSpeed}
                                   onChange={(e) => setAutoPilotSpeed(Number(e.target.value))}
                                   className="bg-white/10 border border-white/20 rounded px-2 py-1 text-white text-xs"
                                 >
-                                  <option value={5}>Fast (5s)</option>
-                                  <option value={10}>Normal (10s)</option>
-                                  <option value={15}>Slow (15s)</option>
+                                  <option value={10}>Fast (10s)</option>
+                                  <option value={15}>Normal (15s)</option>
+                                  <option value={20}>Slow (20s)</option>
                                   <option value={30}>Very Slow (30s)</option>
                                 </select>
                               </div>
@@ -1126,18 +1420,23 @@ Continue writing:`;
                                 size="sm"
                               >
                                 <Sparkles className="w-3 h-3 mr-1" />
-                                Start Auto-Pilot
+                                Start Smart Auto-Pilot
                               </Button>
                             </div>
                           ) : (
                             <div className="space-y-2">
                               <div className="text-center">
                                 <div className="text-green-300 text-xs font-medium mb-1">
-                                  🚀 Auto-Pilot Active
+                                  🚀 Smart Auto-Pilot Active
                                 </div>
                                 <div className="text-gray-400 text-xs">
                                   Writing every {autoPilotSpeed} seconds...
                                 </div>
+                                {chapterWordCount >= 1800 && (
+                                  <div className="text-yellow-400 text-xs mt-1">
+                                    ⚡ Completing chapter soon...
+                                  </div>
+                                )}
                               </div>
                               
                               <Button
